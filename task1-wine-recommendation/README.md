@@ -253,7 +253,7 @@ The current `wine_db_tool` interface stays the same — swap the implementation 
 ### Unit Tests (no LLM required)
 
 ```bash
-make test    # Run all 37 tests
+make test    # Run all 89 tests
 make lint    # Lint check
 make format  # Auto-format
 ```
