@@ -1,0 +1,50 @@
+# Azure OpenAI deployment names — change these to match your Azure deployments.
+# Agents reference these via YAML anchors so you update in ONE place.
+model_defaults:
+  heavy: &model_heavy gpt-4o          # Azure deployment name for GPT-4o
+  light: &model_light gpt-4o-mini     # Azure deployment name for GPT-4o-mini
+
+agents:
+  coordinator:
+    model: *model_light
+    temperature: 0.1
+    prompt: coordinator
+
+  preference_planner:
+    model: *model_heavy
+    temperature: 0.1
+    prompt: preference_planner
+
+  filter_builder:
+    model: *model_light
+    temperature: 0.1
+    prompt: filter_builder
+
+  generator_with_handoff:
+    model: *model_heavy
+    temperature: 0.7
+    prompt: generator
+
+  generator:
+    model: *model_heavy
+    temperature: 0.7
+    prompt: generator
+
+  query_refinement:
+    model: *model_light
+    temperature: 0.3
+    prompt: query_refinement
+
+  explorer:
+    model: *model_heavy
+    temperature: 0.7
+    prompt: explorer
+
+search:
+  top_k: 5
+  relaxation_budget_percent: 20
+  max_tool_calls_per_turn: 5
+
+conversation:
+  max_history: 20
+  max_followup_questions: 3

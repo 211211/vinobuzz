@@ -1,0 +1,384 @@
+{
+	"info": {
+		"_postman_id": "vinobuzz-sommelier-collection",
+		"name": "VinoBuzz AI Sommelier",
+		"description": "API collection for testing the VinoBuzz AI Sommelier wine recommendation system.\n\n## Setup\n1. Start the server: `make dev` (runs on http://localhost:8000)\n2. Ensure `.env` is configured with Azure OpenAI or standard OpenAI credentials\n3. Import this collection into Postman\n4. Run scenarios in order to see different conversation flows\n\n## Architecture\nThe API uses Server-Sent Events (SSE) for streaming responses. Each request sends the full conversation history, and the server streams back events showing agent routing, thinking, and final recommendations.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Health Check",
+			"item": [
+				{
+					"name": "GET /health",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": ["{{base_url}}"],
+							"path": ["health"]
+						},
+						"description": "Verify the server is running before testing the sommelier endpoint."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Scenario 1 — Specific Request (Planner Flow)",
+			"description": "Tests the Planner path: user has clear preferences (type, budget, region, occasion).\n\n**Expected flow:** Coordinator → PreferencePlanner ∥ FilterBuilder → wine_db_tool.search → Generator\n\n**What to look for in SSE stream:**\n- `agent_updated` events showing Coordinator → PreferencePlanner → Generator progression\n- `data` events with 1–3 wine recommendations and `[n](#SKU)` citations\n- `metadata` event with parsed citations (name, price, region)",
+			"item": [
+				{
+					"name": "1a. Single-turn — French red for business dinner",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I need a red wine for a business dinner, budget around HK$500, preferably French\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "All preferences in one message — should get direct recommendations without follow-up questions.\n\n**Signals:** type=red, budget=500, country=France, occasion=business dinner\n**Expected confidence:** >= 0.7"
+					},
+					"response": []
+				},
+				{
+					"name": "1b. Multi-turn — Budget + region revealed gradually",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I'm looking for a red wine for a business dinner.\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Great choice! What's your budget per bottle, and do you have any regional preferences?\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Around HK$500, preferably French.\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "Simulates a multi-turn conversation where preferences are revealed over 2 user messages.\n\n**Tests:** Conversation history is correctly parsed and combined across turns."
+					},
+					"response": []
+				},
+				{
+					"name": "1c. Tight budget — Italian white under HK$200",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I want a white wine from Italy, under HK$200, for a casual dinner with pasta\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "Tests budget filtering + food pairing + country filter.\n\n**Signals:** type=white, country=Italy, budget_max=200, food_pairing=pasta, occasion=casual dinner"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Scenario 2 — Vague Request (Explorer Flow)",
+			"description": "Tests the Explorer path: user is vague or exploratory.\n\n**Expected flow:** Coordinator → Explorer (autonomous with wine_db_search + wine_knowledge_search tools)\n\n**What to look for in SSE stream:**\n- `agent_updated` showing Coordinator → Explorer\n- Explorer may make multiple tool calls before responding\n- Response should still include wine citations",
+			"item": [
+				{
+					"name": "2a. Surprise me",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Surprise me with something interesting for tonight\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "No specific preferences — should route to Explorer flow.\n\n**Expected:** Explorer agent uses tools autonomously to find interesting wines."
+					},
+					"response": []
+				},
+				{
+					"name": "2b. General wine knowledge question",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What's the difference between Bordeaux and Burgundy wines?\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "Knowledge question — should use wine_knowledge_search tool.\n\n**Expected:** Explorer provides educational response with optional wine suggestions."
+					},
+					"response": []
+				},
+				{
+					"name": "2c. What goes with steak?",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What wine goes well with steak?\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "Food pairing question — could route to either Planner or Explorer.\n\n**Expected:** Response recommends wines with food_pairing matching beef/steak."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Scenario 3 — Edge Cases",
+			"description": "Tests boundary conditions: insufficient info (should ask follow-up), restrictive filters (should trigger relaxation), and session continuity.",
+			"item": [
+				{
+					"name": "3a. Minimal info — should ask follow-up",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I want some wine\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "Very little signal — should trigger low confidence and ask a follow-up question.\n\n**Expected:** AI asks about occasion, budget, or wine type preference. Should NOT recommend without asking."
+					},
+					"response": []
+				},
+				{
+					"name": "3b. Impossible filters — triggers relaxation",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I need a sparkling wine from Champagne under HK$100\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "Very restrictive — Champagne sparkling under HK$100 is unlikely in the inventory.\n\n**Expected:** QueryRefinement agent relaxes filters (drops region, expands budget) and Generator provides best available alternatives with explanation."
+					},
+					"response": []
+				},
+				{
+					"name": "3c. Custom session_id",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"session_id\": \"demo-session-001\",\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I'd like a bold Cabernet Sauvignon from Napa Valley for my anniversary\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "Tests custom session_id passthrough.\n\n**Expected:** The `metadata` SSE event should contain `session_id: \"demo-session-001\"`.\n\n**Signals:** grape=Cabernet Sauvignon, region=Napa Valley, occasion=anniversary, body=full"
+					},
+					"response": []
+				},
+				{
+					"name": "3d. Non-English — Japanese user",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"ビジネスディナーに合う赤ワインを探しています。予算はHK$500くらいで、フランス産がいいです。\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "Tests multilingual support. The message says: \"Looking for red wine for a business dinner, budget around HK$500, prefer French.\"\n\n**Expected:** PreferencePlan should detect `user_language` and Generator should respond in Japanese."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Scenario 4 — Long Conversation (3+ turns)",
+			"description": "Simulates a realistic multi-turn conversation where user progressively narrows preferences.",
+			"item": [
+				{
+					"name": "4a. Turn 3 — Full context accumulated",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"session_id\": \"multi-turn-demo\",\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I want some wine for tonight\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"I'd love to help! What's the occasion — a casual evening, dinner party, or something special?\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Date night, something romantic\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Great taste! Do you have a budget in mind, and any preference for red, white, or sparkling?\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Under HK$400, maybe a nice Pinot Noir or something light and elegant\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "3-turn conversation with progressively revealed preferences.\n\n**Accumulated signals:** occasion=date night, budget_max=400, grape=Pinot Noir, body=light\n**Expected confidence:** >= 0.7 — should recommend, not ask more questions."
+					},
+					"response": []
+				},
+				{
+					"name": "4b. Follow-up — User wants alternatives",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"session_id\": \"multi-turn-demo\",\n  \"message_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I want some wine for tonight\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"I'd love to help! What's the occasion?\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Date night, something romantic\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"I recommend the Domaine Faiveley Gevrey-Chambertin 2020 — a beautiful Burgundy Pinot Noir at HK$650.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"That's a bit over my budget. Anything under HK$300?\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sommelier/chat",
+							"host": ["{{base_url}}"],
+							"path": ["sommelier", "chat"]
+						},
+						"description": "User pushes back on price — tests whether the system respects updated budget constraint from conversation context.\n\n**Expected:** New recommendations under HK$300 that still fit the romantic/date night profile."
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
