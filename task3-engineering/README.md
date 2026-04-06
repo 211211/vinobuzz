@@ -157,17 +157,19 @@ tests/test_wines.py::TestRecommendWine::test_recommend_uses_select_for_share_to_
 
 ## Part D — Reflection
 
-I used **Claude Code** (Anthropic's CLI agent) as my primary AI tool for this task. My workflow:
+I used **Claude Code** (Anthropic's CLI agent) as my primary AI tool for this task, with a deliberate model-switching strategy to balance depth and cost.
 
-1. I fed the original buggy code to Claude Code and asked it to identify bugs and generate a fix plan.
-2. Claude Code identified the initial four bugs and the missing feature correctly on the first pass. It generated the fixed code with inline comments explaining each change, and wrote unit tests covering both happy paths and edge cases (SQL injection, `budget_max=0`, connection cleanup on errors).
-3. I then prompted Claude Code about concurrency — specifically the phantom read / TOCTOU risk in the `recommend_wine` endpoint. This led to adding `SELECT ... FOR SHARE` as a pessimistic lock, plus a dedicated test to verify the lock is present.
-4. I further discussed alternative locking strategies (optimistic locking via FK constraints, distributed locks via Redis) with Claude Code. While these weren't implemented in code, the discussion is documented in the Appendix to demonstrate understanding of concurrency trade-offs.
-5. The tests mock `psycopg2.connect` so no real database is needed — this makes them fast, portable, and CI-friendly.
+**My workflow:**
 
-**What worked well:** Claude Code correctly prioritized the SQL injection as the most critical bug and understood the subtle `if budget_max:` truthiness issue. It also caught the missing `conn.commit()` — a bug that would silently lose data with no error message, which is particularly dangerous in production.
+1. **Deep analysis with a reasoning model** — I started with Claude Opus 4.6 on high effort to thoroughly understand the problem. A stronger model at full reasoning depth catches bugs that a faster model with less token window might overlook.
+2. **Checkpoint with plan.md** — Before writing any code, I ask Claude Code generate a plan in Markdown (`PLAN.md`) documenting every bug found, the fix strategy, and the test approach. This serves as a checkpoint — I can review the plan, course-correct if needed, and reference it later.
+3. **Implementation with a cheaper model** — Once the plan was solid, I switched to Claude Sonnet 4.6 for the actual coding. Since the plan already defined what to do, a faster and cheaper model is sufficient for execution. I worked through each bug one at a time to stay within token limits and keep changes reviewable.
+4. **Parallel terminals for independent problems** — For issues that didn't depend on each other (e.g., fixing `search_wines` vs. `recommend_wine`), I ran separate Claude Code sessions in parallel terminals. This cut wall-clock time without sacrificing quality.
+5. **Human-driven concurrency analysis** — I prompted Claude Code about the phantom read / TOCTOU risk in `recommend_wine`. This led to `SELECT ... FOR SHARE` and the appendix comparing alternative locking strategies (FK constraints, Redis distributed locks).
 
-**What needed human judgment:** The concurrency bug (phantom read) was something I raised myself — Claude Code's initial pass focused on the more obvious bugs and didn't flag the TOCTOU race. This is a good example of where human expertise in database concurrency adds value on top of AI-generated fixes. Choosing between `FOR SHARE`, FK constraints, and distributed locks also required architectural judgment about VinoBuzz's deployment model (single Postgres vs. microservices).
+**What worked well:** The reasoning model correctly prioritized SQL injection as the most critical bug and caught the silent data loss from the missing `conn.commit()`. The plan-then-implement workflow meant I never had to backtrack.
+
+**What needed human judgment:** The TOCTOU race condition was something I raised — Claude's initial pass focused on the more obvious bugs. Choosing between `FOR SHARE`, FK constraints, and distributed locks required architectural judgment about VinoBuzz's deployment model.
 
 ## Appendix — Alternative Concurrency Strategies
 
