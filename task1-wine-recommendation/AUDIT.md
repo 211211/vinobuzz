@@ -68,7 +68,7 @@ This file maps every requirement from `requirement.md` (Task 1) to what was impl
 | 1–3 recommendations | PASS | Scenario 1 returned 2 wines, Scenario 2 returned 3 wines — both within spec |
 | Brief explanation per wine | PASS | Each wine had 1–2 sentence explanation (e.g., "A classic Bordeaux from Saint-Julien, offering bold blackcurrant and cedar notes") |
 | Citation format for traceability | PASS | `[n](#SKU)` format in generator output; `parse_citations()` extracts structured `WineCitation` objects |
-| Wine data with meaningful fields | PASS | 36-wine inventory in `wines.py` with sku, name, type, grape, region, country, vintage, price_hkd, tasting_notes, occasions, body, sweetness, food_pairing, rating |
+| Wine data with meaningful fields | PASS | 35-wine inventory in `wines.py` with sku, name, type, grape, region, country, vintage, price_hkd, tasting_notes, occasions, body, sweetness, food_pairing, rating |
 
 **Test coverage:**
 - `test_citation.py::TestParseCitations` — 6 tests: single/multiple citations, dedup, unknown SKU, field validation
@@ -87,7 +87,7 @@ This file maps every requirement from `requirement.md` (Task 1) to what was impl
 
 | Sub-requirement | Status | Evidence |
 |---|---|---|
-| Wine inventory exists | PASS | `app/data/wines.py` — 36 wines hardcoded |
+| Wine inventory exists | PASS | `app/data/wines.py` — 35 wines hardcoded |
 | Diverse wine regions | PASS | France, Italy, Spain, USA, Australia, New Zealand, Chile, Argentina, South Africa, Germany, Japan, Portugal |
 | Realistic pricing (HKD) | PASS | Prices range from HK$120 to HK$3,800 |
 | Wine knowledge base | PASS | `app/data/wine_knowledge.py` — pairing rules, region facts, grape profiles |

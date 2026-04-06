@@ -3,7 +3,7 @@ import logging
 from typing import AsyncGenerator
 from uuid import uuid4
 
-from agents import Runner, ItemHelpers, RawResponsesStreamEvent, RunItemStreamEvent
+from agents import Runner, ItemHelpers
 
 from app.biz.agent.sommelier.agents.coordinator import create_coordinator_agent
 from app.biz.agent.sommelier.agents.explorer import create_explorer_agent
@@ -144,23 +144,10 @@ class SommelierMode:
             },
         )
 
-        # Stream the generator response
-        full_response = ""
+        # Consume the generator stream to completion
         result = Runner.run_streamed(generator, input=augmented_messages)
         async for event in result.stream_events():
-            if isinstance(event, RawResponsesStreamEvent):
-                continue
-            elif isinstance(event, RunItemStreamEvent):
-                if hasattr(event, "item") and hasattr(event.item, "raw_item"):
-                    pass
-            # Extract text deltas
-            if (
-                isinstance(event, RawResponsesStreamEvent)
-                and hasattr(event, "data")
-            ):
-                pass
-
-        # stream_events() fully consumes the run — result is now complete.
+            pass
 
         # Check if generator handed off to query refinement
         if result.last_agent.name == "QueryRefinement":

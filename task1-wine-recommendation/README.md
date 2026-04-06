@@ -76,35 +76,72 @@ data: {"message": "Stream completed"}
 
 ## Workflow Architecture
 
+### Planner Flow — Structured Recommendations
+
+Triggered when the user has specific preferences (budget, occasion, region, wine type).
+
 ```mermaid
 flowchart TD
-    A[User Message] --> B[POST /sommelier/chat]
-    B --> C[SommelierMode Orchestrator]
-    C --> D{Coordinator Agent}
+    User["User"] -->|"POST /sommelier/chat"| API["API Router (SSE)"]
+    API --> Mode["SommelierMode Orchestrator"]
+    Mode --> Coord{"Coordinator<br/><i>gpt-4o-mini</i>"}
+    Coord -->|"Specific request<br/>e.g. 'red wine under $300<br/>for steak dinner'"| PF["Planner Flow"]
 
-    D -->|User has preferences| E[Planner Flow]
-    D -->|Vague / open-ended| F[Explorer Flow]
+    PF --> Parallel["⚡ Parallel — asyncio.TaskGroup"]
+    Parallel --> PP["PreferencePlanner<br/><i>gpt-4o</i><br/>→ PreferencePlan"]
+    Parallel --> FB["FilterBuilder<br/><i>gpt-4o-mini</i><br/>→ WineFilter"]
 
-    subgraph Planner Flow
-        E --> G[Preference Planner + Filter Builder<br/>run in parallel]
-        G --> H[wine_db_tool.search<br/>Pure Python - no LLM]
-        H --> I{Generator Agent}
-        I -->|Sufficient context| J[Wine Recommendations<br/>1-3 wines with citations]
-        I -->|Insufficient context| K[Query Refinement Agent]
-        K --> L[Relaxed search]
-        L --> M[Generator - no handoff<br/>Answer with best available]
-    end
+    PP --> Search["wine_db_tool.search_wines()<br/><i>Pure Python — no LLM</i>"]
+    FB --> Search
 
-    subgraph Explorer Flow
-        F --> N[Explorer Agent<br/>Autonomous with tools]
-        N -->|tool call| O[wine_db_search]
-        N -->|tool call| P[wine_knowledge_search]
-        N --> Q[Conversational Response<br/>with wine citations]
-    end
+    Search --> Check{"Results ≥ 3?"}
+    Check -->|"Yes"| Gen["Generator<br/><i>gpt-4o, temp=0.7</i>"]
+    Check -->|"No"| QR["QueryRefinement<br/><i>gpt-4o-mini</i><br/>Relax: drop region → budget ±20%<br/>→ drop grape/body/sweetness"]
+    QR --> Search2["wine_db_tool.search_wines()<br/><i>Relaxed filters</i>"]
+    Search2 --> Gen
 
-    J --> R[SSE Stream Response]
-    M --> R
-    Q --> R
+    Gen --> Stream["Stream Final Answer"]
+    Stream --> SSE["📡 SSE Events"]
+    SSE --> E1["metadata · agent_updated · data · citations · done"]
+
+    style Coord fill:#e5dbff,stroke:#6741d9
+    style PP fill:#dbeafe,stroke:#2563eb
+    style FB fill:#dbeafe,stroke:#2563eb
+    style Gen fill:#fef3c7,stroke:#d97706
+    style QR fill:#fce7f3,stroke:#db2777
+    style Search fill:#f3f4f6,stroke:#6b7280
+    style Search2 fill:#f3f4f6,stroke:#6b7280
+    style Parallel fill:#fff7ed,stroke:#ea580c
+```
+
+### Explorer Flow — Open-Ended Discovery
+
+Triggered when the user is vague or exploratory ("surprise me", "what's good?").
+
+```mermaid
+flowchart TD
+    User["User"] -->|"POST /sommelier/chat"| API["API Router (SSE)"]
+    API --> Mode["SommelierMode Orchestrator"]
+    Mode --> Coord{"Coordinator<br/><i>gpt-4o-mini</i>"}
+    Coord -->|"Vague / open-ended request<br/>e.g. 'surprise me'<br/>'what's good?'"| EF["Explorer Flow"]
+
+    EF --> EA["Explorer Agent<br/><i>gpt-4o</i><br/>Autonomous with tools"]
+
+    EA -->|"Tool call"| T1["🔧 wine_db_search<br/><i>Filter & score inventory</i>"]
+    EA -->|"Tool call"| T2["🔧 wine_knowledge_search<br/><i>Pairing rules, region facts,<br/>grape profiles</i>"]
+    T1 -->|"Results"| EA
+    T2 -->|"Results"| EA
+
+    EA -->|"May iterate<br/>multiple tool calls"| EA
+
+    EA --> Stream["Stream Final Answer"]
+    Stream --> SSE["📡 SSE Events"]
+    SSE --> E1["metadata · agent_updated · data · citations · done"]
+
+    style Coord fill:#e5dbff,stroke:#6741d9
+    style EA fill:#d1fae5,stroke:#059669
+    style T1 fill:#ecfdf5,stroke:#059669
+    style T2 fill:#ecfdf5,stroke:#059669
 ```
 
 ### Agent Summary
