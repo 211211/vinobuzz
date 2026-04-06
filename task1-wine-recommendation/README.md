@@ -174,73 +174,77 @@ Change 2 lines to swap all agents to different deployments.
 ### Scenario 1: Specific User (Planner Flow)
 
 ```
-User: "I'm looking for a red wine for a business dinner."
-AI:   "What's your budget per bottle, and do you have any regional preferences?"
-User: "Around HK$500, preferably French."
-AI:   "Based on your preferences for a French red under HK$500 for a business dinner,
-       here are my top picks:
-
-       1. **Chateau Leoville-Barton 2019** [1](#FR-BDX-002) — A classic Saint-Julien
-          Bordeaux with blackcurrant and cedar notes. At HK$480, it signals good taste
-          at a business dinner.
-
-       2. **Chateau Sociando-Mallet 2018** [2](#FR-BDX-003) — Rich and well-structured
-          with ripe tannins. At HK$320, excellent value for a respected Bordeaux label.
-
-       3. **E. Guigal Cotes du Rhone Rouge 2020** [3](#FR-RHN-001) — Spicy dark berry
-          with peppery notes. At HK$140, a great everyday option if you need multiple
-          bottles.
-
-       Would you like more details, or shall I look for something different?"
+User: "Red wine for a business dinner, around HK$500, French if possible."
+AI:   "Here are my top picks:
+       1. Chateau Leoville-Barton 2019 [1](#FR-BDX-002) — Classic Bordeaux, HK$480
+       2. Chateau Sociando-Mallet 2018 [2](#FR-BDX-003) — Rich and structured, HK$320
+       3. E. Guigal Cotes du Rhone Rouge 2020 [3](#FR-RHN-001) — Spicy dark berry, HK$140
+       Would you like more details?"
 ```
 
-**Flow:** Coordinator → Planner → PreferencePlanner ∥ FilterBuilder → wine_db_tool → Generator → SSE response
+**Flow:** Coordinator → PreferencePlanner ∥ FilterBuilder → wine_db_tool → Generator → SSE
 
 ### Scenario 2: Vague User (Explorer Flow)
 
 ```
 User: "Surprise me — something for tonight, nothing fancy."
-AI:   "Here are three great picks for a relaxed evening:
-
-       1. **Trapiche Broquel Malbec 2021** [1](#AR-MEN-002) — Juicy blackberry and plum
-          with a hint of vanilla. At HK$120, it's an easy-drinking crowd-pleaser.
-
-       2. **Louis Jadot Bourgogne Pinot Noir 2021** [2](#FR-BRG-002) — Light cherry
-          and raspberry, smooth and approachable. HK$180 for genuine Burgundy.
-
-       3. **Jacob's Creek Reserve Barossa Shiraz 2021** [3](#AU-BAR-002) — Plum and
-          pepper with smooth vanilla finish. Just HK$100 — perfect casual wine.
-
-       Any of these catch your eye? Or tell me what you're having for dinner and
-       I'll narrow it down!"
+AI:   "Three picks for a relaxed evening:
+       1. Trapiche Broquel Malbec 2021 [1](#AR-MEN-002) — Juicy blackberry, HK$120
+       2. Louis Jadot Bourgogne Pinot Noir 2021 [2](#FR-BRG-002) — Light cherry, HK$180
+       3. Jacob's Creek Reserve Shiraz 2021 [3](#AU-BAR-002) — Plum and pepper, HK$100
+       What are you having for dinner? I can narrow it down!"
 ```
 
-**Flow:** Coordinator → Explorer (with wine_db_search tool calls) → SSE response
+**Flow:** Coordinator → Explorer (wine_db_search + wine_knowledge_search) → SSE
 
 ---
 
-## Design Rationale (300 words)
+## Design Rationale
 
-**Why dual-path multi-agent architecture?**
+### Decision 1: Two paths instead of one (Planner vs Explorer)
 
-Wine recommendation has two fundamentally different user modes: users who know what they want ("French red, $500, business dinner") and users who don't ("surprise me"). A single-path system forces compromise — either too many questions for specific users or too few for vague ones. Our dual-path design (Planner Flow vs Explorer Flow) handles both optimally, inspired by production patterns in enterprise search systems.
+Some users say "French red under $500 for a business dinner" — they know what they want. Others say "surprise me" — they don't. A single pipeline either asks too many questions for the first group or too few for the second. So the Coordinator agent (gpt-4o-mini) reads the conversation and uses `handoff()` to route to the right flow.
 
-**Why a Python orchestrator, not an LLM orchestrator?**
+- **Pro:** Each flow is optimized for its use case — Planner is fast and structured, Explorer is flexible and conversational
+- **Pro:** Each path can be tested and improved independently
+- **Con:** More code to maintain than a single-agent approach
 
-The routing decision (structured vs autonomous) is deterministic enough for a lightweight Coordinator Agent. But the flow execution — parallel agent calls, retry logic, citation building — is pure Python in `SommelierMode.run()`. This keeps latency low (no extra LLM calls for plumbing) and makes the system testable and debuggable.
+### Decision 2: Application-level orchestration, not LLM-level
 
-**Why pre-compute context, then inject?**
+The Coordinator agent (gpt-4o-mini) picks the path, but everything after — parallel calls, retries, citation building — is our own Python code. Why? LLM providers update models without notice. If your workflow lives inside LLM calls, a model upgrade you didn't ask for can silently break it. We let LLMs do what they're good at (understanding preferences, writing recommendations) and keep the flow logic in code we control.
 
-Rather than having the Generator Agent call search tools at runtime, we run PreferencePlanner + FilterBuilder → search → inject results into Generator's system prompt. This mirrors production RAG patterns: the Generator sees pre-retrieved context and focuses purely on response quality. It also enables the retry path — if context is insufficient, QueryRefinement transforms queries and re-searches before a second Generator pass.
+- **Pro:** Upstream model changes can't break our orchestration — only the creative parts are affected
+- **Pro:** Deterministic, testable, no surprise LLM costs on plumbing
+- **Con:** Adding a new flow path means writing code, not just a prompt tweak
 
-**Why hardcoded inventory?**
+### Decision 3: Recommend from the vendor's own selection first
 
-The assignment says "the focus is on workflow design, not real inventory." Our `wine_db_tool` has the same interface whether backed by a Python list or PostgreSQL — the search/filter/score logic is identical. The hardcoded data lets us demo without infrastructure dependencies while keeping the architecture production-ready.
+Every wine vendor has their own curated inventory and taste — that's their identity. Our system always searches the vendor's own catalog first, scored and ranked against their own data (prices, tasting notes, occasion tags, ratings). The LLM never goes outside what the vendor actually carries. It writes the recommendation, but every wine it mentions is a real item from the vendor's shelf with a citation linking back to the exact record. This means the output is stable and accurate: swap the LLM model tomorrow, the wine facts don't change because they come from the vendor's data, not the LLM's training data or an internet search. If results are thin, we progressively relax filters and retry — still against the same trusted catalog.
 
-**Trade-offs:**
-- 2-3 LLM calls per turn adds ~2-3s latency vs single-call — acceptable for recommendation quality
-- Dual-path means more code than single-agent — but each path is independently testable
-- In-memory sessions lost on restart — intentional for simplicity, designed for Redis swap
+- **Pro:** Recommendations reflect the vendor's curation and taste, not generic internet results
+- **Pro:** Stable, accurate output — wine facts come from the vendor's data, not the LLM, so results stay consistent across model updates
+- **Pro:** Every recommendation has a verifiable citation — zero hallucination risk
+- **Con:** 2–3 LLM calls per turn adds ~2–3s vs a single call — worth it for accuracy
+- **Con:** Only recommends what the vendor carries — but that's exactly the point
+
+### Decision 4: Hardcoded inventory (demo) vs Graph-based search (production)
+
+The current implementation uses a hardcoded wine list — good enough for demonstrating the workflow, but not how we'd run this in production.
+
+**Current approach (this demo):** Flat list of 35 wines, scored and filtered in Python. Simple, zero-setup, no infrastructure needed.
+
+**Production approach:** Replace the flat inventory with a **knowledge graph** (e.g. LightRAG, Neo4j, or similar graph-based RAG). Wine data naturally forms a graph — a wine *is from* a region, *pairs with* a food, *is made from* a grape, a grape *thrives in* a climate, a region *is known for* a style. A graph captures these relationships, so when a user asks "something like that Bordeaux but lighter," the system traverses the graph (Bordeaux → full-bodied → find lighter-bodied neighbors) instead of relying on keyword matching or LLM reasoning. This means:
+
+- **Better recall:** Graph traversal finds wines connected by relationships that flat filters miss (e.g. "wines similar to X" or "what pairs with Y in a Z occasion")
+- **Vendor knowledge encoded once:** The vendor's expertise — which wines they pair together, which they recommend for specific occasions, how they group their collection — lives in the graph as edges, not as prompt engineering
+- **Scales with catalog size:** Flat-list scoring breaks down at 500+ wines; graph search stays fast via indexed traversal
+- **Hybrid retrieval:** Combine graph traversal (structural similarity) with vector search (semantic similarity) for the best of both worlds
+
+The current `wine_db_tool` interface stays the same — swap the implementation behind `search_wines()` from list filtering to graph query. The orchestration layer doesn't change at all.
+
+- **Pro (current):** Zero setup, runs anywhere with just an API key
+- **Pro (production):** Graph search captures wine relationships that flat filters and LLMs cannot reliably reason about
+- **Con (current):** Sessions lost on restart, inventory is static — both designed for easy swap (Redis, graph DB)
 
 ---
 
